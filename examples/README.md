@@ -3,129 +3,99 @@
 | Flow | What it does |
 |---|---|
 | [`node-red-flow.json`](node-red-flow.json) | Lock / unlock buttons and a listener for `level_lock_cloud_state_changed` |
-| [`unifi-access-unlock-flow.json`](unifi-access-unlock-flow.json) | Unlocks the matching Level lock when a UniFi Access reader grants access |
+| [`alarm-manager-unlock-flow.json`](alarm-manager-unlock-flow.json) | Unlocks a Level lock when UniFi Alarm Manager calls a webhook (e.g. access granted at a reader) |
 
 Import a flow in Node-RED: **Menu → Import → select file → Import**, then pick your Home Assistant server in the Home Assistant nodes.
 
 ---
 
-## UniFi Access → Level unlock
+## UniFi Alarm Manager → Level unlock
 
 ```mermaid
 sequenceDiagram
-    participant R as UniFi Access reader
-    participant U as UniFi Access
+    participant A as UniFi Alarm Manager
     participant N as Node-RED
     participant H as Home Assistant
     participant L as Level lock
-    R->>U: Badge / PIN / face accepted
-    U->>N: POST webhook access.door.unlock (signed)
-    N->>N: Verify signature with secret
-    N-->>U: 200 OK (401 if invalid)
-    N->>H: lock.unlock on the mapped lock
-    H->>L: Unlock via Level cloud
+    A->>N: POST webhook ?lock=lock.front_door (Bearer token)
+    N->>N: Check token, IP, lock, payload, age, duplicates
+    N-->>A: 200 OK (401/400/403 if rejected)
+    N->>H: Current state of the lock
+    alt not already unlocked
+        N->>H: lock.unlock
+        H->>L: Unlock via Level cloud
+    else already unlocked
+        N->>N: Skip (logged)
+    end
 ```
 
-### How the flow verifies requests
+### What the flow checks
 
-UniFi Access signs each webhook with a `Signature: t=<unix time>,v1=<hex>` header. `v1` is HMAC-SHA256 of `<t>.<raw body>`, keyed with the webhook secret. The **Verify signature** node:
+Alarm Manager does not sign its webhooks, so the bearer token is the main protection. The **Check request** node rejects a request unless all of these pass:
 
-- recomputes the HMAC over the **raw** body and compares it in constant time;
-- rejects signatures older than 5 minutes (replay protection);
-- ignores exact repeat deliveries;
-- answers `401` for anything invalid, without unlocking.
+| Check | Rejects with |
+|---|---|
+| Source IP is in `ALARM_MANAGER_ALLOWED_IPS` (only if you set it) | `403` |
+| `Authorization: Bearer <token>` matches `ALARM_MANAGER_BEARER` (constant-time compare) | `401` |
+| `?lock=` is one of `ALLOWED_LOCKS` | `400` |
+| Body is an Alarm Manager payload (has an `alarm` object) | `400` |
+| `timestamp` in the body is less than 5 minutes old (skipped if absent) | `400` |
+| Not a repeat of an alarm already handled | `200` without unlocking |
 
-The secret is read from the Node-RED environment variable `UNIFI_ACCESS_WEBHOOK_SECRET`; it is never stored in the flow.
+### Acknowledging
+
+Yes, the flow must answer: Node-RED keeps the HTTP request open until an **http response** node replies, and Alarm Manager would otherwise wait and time out. The **Acknowledge** node replies right after the checks (`200 ok`, or the error code), *before* the lock is unlocked, so Alarm Manager is never kept waiting on the Level cloud.
+
+### Choosing the lock
+
+Each Alarm Manager webhook picks its lock in the URL:
+
+```
+http://<home-assistant-ip>:1880/endpoint/alarm-manager/unlock?lock=lock.front_door
+http://<home-assistant-ip>:1880/endpoint/alarm-manager/unlock?lock=lock.garage
+```
+
+The value is the Home Assistant entity ID of the Level lock (Settings → Devices & Services → Entities, or the lock's settings dialog). Only locks listed in `ALLOWED_LOCKS` at the top of **Check request** can be unlocked:
+
+```js
+const ALLOWED_LOCKS = ["lock.front_door", "lock.garage"];
+```
+
+So for two doors: create two alarms in Alarm Manager (one per reader), each with its own webhook URL.
 
 ### Setup
 
-#### 1. Import the flow
+1. **Import** [`alarm-manager-unlock-flow.json`](alarm-manager-unlock-flow.json). It creates a tab **Alarm Manager → Level**.
+2. **Set the token:** double-click the tab → **Environment**. `ALARM_MANAGER_BEARER` is a *credential* variable: type the token and it is stored encrypted, not exported with the flow. Generate a long random token, e.g. `openssl rand -hex 32`.
+   Optionally set `ALARM_MANAGER_ALLOWED_IPS` to your UniFi console's IP (comma-separated for several).
+3. **Home Assistant server:** open **Not already unlocked?** and **Unlock** and select your server.
+4. **Locks:** edit `ALLOWED_LOCKS` in **Check request** if your entity IDs differ.
+5. **Deploy.**
+6. **Alarm Manager:** for each reader, create an alarm with the trigger you want (e.g. access granted at that reader) and a **Webhook** action:
+   - Method: **POST**
+   - URL: the URL above with that door's `?lock=`
+   - Header: `Authorization` = `Bearer <your token>`
+7. **Port:** with the Home Assistant Node-RED add-on, enable port **1880** in the add-on's Network settings. HTTP In nodes are served under `/endpoint`.
 
-Import [`unifi-access-unlock-flow.json`](unifi-access-unlock-flow.json). It creates a tab **UniFi Access → Level**.
-
-- Open **Unlock Level lock** and select your Home Assistant server.
-- Open **Map door → lock** and edit `DOORS`, one entry per door:
-
-```js
-const DOORS = {
-    "Front Door": "lock.front_door",   // UniFi door name (or door ID) → Level lock entity
-    "Garage": "lock.garage",
-};
-```
-
-Use the door names exactly as they appear in UniFi Access. If a name doesn't match, the debug sidebar prints `No Level lock mapped for UniFi door "<name>" (id <id>)`. Copy the name or ID from that line. Using the ID is more robust if you later rename doors.
-
-- Keep **Do not parse body** ticked on **UniFi Access webhook** (HTTP In). The signature can only be checked on the raw body.
-
-#### 2. Create a UniFi Access API token
-
-UniFi Access → **Settings → General → Advanced → API Token** → create a token with permission to manage **webhooks**. (Menu names can vary between Access versions.) Access 2.2.10 or later is required for webhook endpoints.
-
-#### 3. Find the webhook URL
-
-With the Home Assistant **Node-RED add-on**, HTTP In nodes are served under `/endpoint`:
-
-```
-http://<home-assistant-ip>:1880/endpoint/unifi-access/unlock
-```
-
-Port 1880 must be enabled in the add-on's **Network** settings. Use the IP address of Home Assistant on the same network as the UniFi console.
-
-If the add-on has `http_node` username/password set, add an `Authorization` header when registering the webhook (step 4).
-
-#### 4. Register the webhook in UniFi Access
-
-From a computer on the same network (replace the values in `<>`):
+### Test without Alarm Manager
 
 ```bash
-curl -k -X POST "https://<unifi-console-ip>:12445/api/v1/developer/webhooks/endpoints" \
-  -H "Authorization: Bearer <api-token>" \
+curl -i -X POST "http://<home-assistant-ip>:1880/endpoint/alarm-manager/unlock?lock=lock.front_door" \
+  -H "Authorization: Bearer <your token>" \
   -H "Content-Type: application/json" \
-  -d '{
-        "name": "Node-RED Level unlock",
-        "endpoint": "http://<home-assistant-ip>:1880/endpoint/unifi-access/unlock",
-        "events": ["access.door.unlock"]
-      }'
+  -d '{"alarm":{"name":"Test"}}'
 ```
 
-If Node-RED's HTTP endpoints need a password, add `"headers": {"Authorization": "Basic <base64 of user:password>"}` to the JSON.
-
-The response contains a **`secret`**. Keep it for the next step.
-
-#### 5. Set the secret in Node-RED
-
-Node-RED → **Menu → Settings → Environment** → add:
-
-| Name | Value |
-|---|---|
-| `UNIFI_ACCESS_WEBHOOK_SECRET` | the `secret` from step 4 |
-
-Click **Done**, then **Deploy**. (Global environment variables need Node-RED 3.1 or later.)
-
-#### 6. Test
-
-Badge in at each reader. The nodes show their status:
-
-| Node | Status |
-|---|---|
-| Verify signature | `access.door.unlock verified`, or the reason it was rejected |
-| Map door → lock | `<door> → lock.<entity> (<person>)` |
-
-The **Unlock log** debug node prints the door, person and method for each unlock.
+This really unlocks the door if it is locked.
 
 ### Troubleshooting
 
-| Symptom | Cause |
+| Node status / response | Cause |
 |---|---|
-| Nothing happens, no node status changes | UniFi can't reach Node-RED: check the URL, port 1880 and any HTTP auth |
-| `invalid signature` | Wrong secret, or **Do not parse body** was turned off |
-| `signature expired` | Clock difference over 5 minutes between UniFi and Home Assistant: fix NTP |
-| `raw body unavailable` | **Do not parse body** is off on the HTTP In node |
-| `not configured` | `UNIFI_ACCESS_WEBHOOK_SECRET` is missing; deploy after adding it |
-| `unmapped: <door>` | Add that door to `DOORS` |
-
-### Notes
-
-- Only `access.door.unlock` events trigger an unlock. Events whose result says denied/blocked are ignored.
-- The unlock goes through the Level cloud and usually takes a few seconds.
-- Anyone who can reach the URL can only trigger an unlock with a valid signature, so keep the secret private.
+| No response, nothing in Node-RED | Wrong URL or port 1880 not enabled |
+| `invalid token` / `401` | Header missing or token differs (Alarm Manager must send `Bearer <token>`) |
+| `not configured` / `500` | `ALARM_MANAGER_BEARER` not set on the tab, or not deployed |
+| `unknown lock` / `400` | `?lock=` missing or not in `ALLOWED_LOCKS` |
+| `source not allowed` / `403` | Request IP not in `ALARM_MANAGER_ALLOWED_IPS` |
+| `alarm too old` | Clocks differ by more than 5 minutes: check NTP |
+| **Already unlocked (skipped)** debug message | Lock was already unlocked; no command sent |

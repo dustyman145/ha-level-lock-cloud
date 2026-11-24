@@ -1,0 +1,187 @@
+[
+  {
+    "id": "am_level_tab",
+    "type": "tab",
+    "label": "Alarm Manager → Level",
+    "disabled": false,
+    "info": "Unlocks a Level lock when UniFi Alarm Manager calls the webhook.\nSetup: examples/README.md in ha-level-lock-cloud.",
+    "env": [
+      {
+        "name": "ALARM_MANAGER_BEARER",
+        "value": "",
+        "type": "cred"
+      },
+      {
+        "name": "ALARM_MANAGER_ALLOWED_IPS",
+        "value": "",
+        "type": "str"
+      }
+    ]
+  },
+  {
+    "id": "am_comment",
+    "type": "comment",
+    "z": "am_level_tab",
+    "name": "Setup: double-click the tab → Environment: set ALARM_MANAGER_BEARER. Edit ALLOWED_LOCKS in 'Check request'. Pick your HA server in the two HA nodes.",
+    "info": "",
+    "x": 500,
+    "y": 40,
+    "wires": []
+  },
+  {
+    "id": "am_http_in",
+    "type": "http in",
+    "z": "am_level_tab",
+    "name": "Alarm Manager webhook",
+    "url": "/alarm-manager/unlock",
+    "method": "post",
+    "upload": false,
+    "skipBodyParsing": false,
+    "swaggerDoc": "",
+    "x": 150,
+    "y": 120,
+    "wires": [
+      [
+        "am_check"
+      ]
+    ]
+  },
+  {
+    "id": "am_check",
+    "type": "function",
+    "z": "am_level_tab",
+    "name": "Check request",
+    "func": "// Checks a UniFi Alarm Manager webhook and answers it.\n// Output 1: accepted request -> lock state check\n// Output 2: HTTP response for Alarm Manager\n//\n// Locks this flow is allowed to unlock. The webhook URL chooses one with ?lock=<entity_id>\nconst ALLOWED_LOCKS = [\"lock.front_door\", \"lock.garage\"];\nconst MAX_AGE_SECONDS = 300; // reject alarms whose timestamp is older than 5 minutes\n\nconst token = env.get(\"ALARM_MANAGER_BEARER\");\nconst allowedIps = String(env.get(\"ALARM_MANAGER_ALLOWED_IPS\") || \"\")\n    .split(\",\").map(s => s.trim()).filter(Boolean);\n\nfunction respond(code, text) {\n    return { req: msg.req, res: msg.res, statusCode: code, payload: text };\n}\nfunction reject(code, reason) {\n    node.warn(\"Alarm Manager webhook rejected: \" + reason);\n    node.status({ fill: \"red\", shape: \"ring\", text: reason });\n    return [null, respond(code, reason)];\n}\nfunction sameSecret(a, b) {\n    // Hash both so the comparison is constant-time and length-independent\n    const ha = crypto.createHash(\"sha256\").update(String(a)).digest();\n    const hb = crypto.createHash(\"sha256\").update(String(b)).digest();\n    return crypto.timingSafeEqual(ha, hb);\n}\n\nif (!token) {\n    node.error(\"Flow environment variable ALARM_MANAGER_BEARER is not set\");\n    return reject(500, \"not configured\");\n}\n\n// 1. Optional source IP allow-list\nif (allowedIps.length) {\n    const ip = String(msg.req.ip || \"\").replace(/^::ffff:/, \"\");\n    if (!allowedIps.includes(ip)) return reject(403, \"source not allowed: \" + ip);\n}\n\n// 2. Bearer token\nconst auth = String(msg.req.headers[\"authorization\"] || \"\");\nconst match = auth.match(/^Bearer\\s+(.+)$/i);\nif (!match || !sameSecret(match[1].trim(), token)) return reject(401, \"invalid token\");\n\n// 3. Lock chosen by the URL\nconst entity = String((msg.req.query && msg.req.query.lock) || \"\");\nif (!ALLOWED_LOCKS.includes(entity)) return reject(400, \"unknown lock: \" + (entity || \"(none)\"));\n\n// 4. Payload sanity\nconst body = msg.payload;\nif (!body || typeof body !== \"object\" || !body.alarm || typeof body.alarm !== \"object\") {\n    return reject(400, \"not an Alarm Manager payload\");\n}\n\n// 5. Freshness (Alarm Manager sends a millisecond timestamp)\nconst ts = Number(body.timestamp);\nif (ts > 0 && Math.abs(Date.now() - ts) > MAX_AGE_SECONDS * 1000) {\n    return reject(400, \"alarm too old\");\n}\n\n// 6. Ignore repeat deliveries of the same alarm\nconst key = [entity, body.alarm.name, body.timestamp,\n    JSON.stringify((body.alarm.triggers || []).map(t => t && (t.eventId || t.key)))].join(\"|\");\nconst seen = flow.get(\"alarmManagerSeen\") || [];\nif (seen.includes(key)) {\n    node.status({ fill: \"yellow\", shape: \"ring\", text: \"duplicate ignored\" });\n    return [null, respond(200, \"duplicate\")];\n}\nseen.push(key);\nflow.set(\"alarmManagerSeen\", seen.slice(-100));\n\nnode.status({ fill: \"green\", shape: \"dot\", text: `${body.alarm.name || \"alarm\"} → ${entity}` });\nreturn [\n    {\n        payload: { entity_id: entity, action: \"lock.unlock\", target: { entity_id: [entity] } },\n        alarm: { name: body.alarm.name, lock: entity, triggers: body.alarm.triggers },\n    },\n    respond(200, \"ok\"),\n];\n",
+    "outputs": 2,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [
+      {
+        "var": "crypto",
+        "module": "crypto"
+      }
+    ],
+    "x": 370,
+    "y": 120,
+    "wires": [
+      [
+        "am_state"
+      ],
+      [
+        "am_http_out"
+      ]
+    ]
+  },
+  {
+    "id": "am_http_out",
+    "type": "http response",
+    "z": "am_level_tab",
+    "name": "Acknowledge",
+    "statusCode": "",
+    "headers": {},
+    "x": 580,
+    "y": 180,
+    "wires": []
+  },
+  {
+    "id": "am_state",
+    "type": "api-current-state",
+    "z": "am_level_tab",
+    "name": "Not already unlocked?",
+    "server": "",
+    "version": 3,
+    "outputs": 2,
+    "halt_if": "unlocked",
+    "halt_if_type": "str",
+    "halt_if_compare": "is_not",
+    "entity_id": "",
+    "state_type": "str",
+    "blockInputOverrides": false,
+    "outputProperties": [
+      {
+        "property": "lock_state",
+        "propertyType": "msg",
+        "value": "",
+        "valueType": "entityState"
+      }
+    ],
+    "for": "0",
+    "forType": "num",
+    "forUnits": "minutes",
+    "x": 600,
+    "y": 120,
+    "wires": [
+      [
+        "am_unlock"
+      ],
+      [
+        "am_skipped"
+      ]
+    ]
+  },
+  {
+    "id": "am_unlock",
+    "type": "api-call-service",
+    "z": "am_level_tab",
+    "name": "Unlock",
+    "server": "",
+    "version": 7,
+    "debugenabled": false,
+    "action": "lock.unlock",
+    "floorId": [],
+    "areaId": [],
+    "deviceId": [],
+    "entityId": [],
+    "labelId": [],
+    "data": "",
+    "dataType": "jsonata",
+    "mergeContext": "",
+    "mustacheAltTags": false,
+    "outputProperties": [],
+    "queue": "none",
+    "blockInputOverrides": false,
+    "x": 820,
+    "y": 100,
+    "wires": [
+      [
+        "am_done"
+      ]
+    ]
+  },
+  {
+    "id": "am_done",
+    "type": "debug",
+    "z": "am_level_tab",
+    "name": "Unlocked",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "alarm",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 990,
+    "y": 100,
+    "wires": []
+  },
+  {
+    "id": "am_skipped",
+    "type": "debug",
+    "z": "am_level_tab",
+    "name": "Already unlocked (skipped)",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "alarm",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 870,
+    "y": 160,
+    "wires": []
+  }
+]

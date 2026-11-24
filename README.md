@@ -73,7 +73,7 @@ Needs [node-red-contrib-home-assistant-websocket](https://github.com/zachowj/nod
 Example flows (Menu → Import, then set your server and entity IDs):
 
 - [`examples/node-red-flow.json`](examples/node-red-flow.json): lock/unlock buttons and the state-change event.
-- [`examples/unifi-access-unlock-flow.json`](examples/unifi-access-unlock-flow.json): unlock the matching Level lock when a **UniFi Access** reader grants access, with webhook signature verification. Setup: [`examples/README.md`](examples/README.md).
+- [`examples/alarm-manager-unlock-flow.json`](examples/alarm-manager-unlock-flow.json): unlock a Level lock when **UniFi Alarm Manager** calls a webhook (bearer token, skips if already unlocked). Setup: [`examples/README.md`](examples/README.md).
 
 ## Troubleshooting
 
