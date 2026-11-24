@@ -1,0 +1,141 @@
+[
+  {
+    "id": "ua_level_tab",
+    "type": "tab",
+    "label": "UniFi Access → Level",
+    "disabled": false,
+    "info": "Unlocks a Level lock when UniFi Access reports an unlock at the matching door.\n\nSetup: see examples/README.md in ha-level-lock-cloud."
+  },
+  {
+    "id": "ua_comment",
+    "type": "comment",
+    "z": "ua_level_tab",
+    "name": "Setup: set env UNIFI_ACCESS_WEBHOOK_SECRET, edit DOORS in 'Map door → lock', pick your HA server in 'Unlock Level lock'",
+    "info": "",
+    "x": 420,
+    "y": 40,
+    "wires": []
+  },
+  {
+    "id": "ua_http_in",
+    "type": "http in",
+    "z": "ua_level_tab",
+    "name": "UniFi Access webhook",
+    "url": "/unifi-access/unlock",
+    "method": "post",
+    "upload": false,
+    "skipBodyParsing": true,
+    "swaggerDoc": "",
+    "x": 150,
+    "y": 120,
+    "wires": [
+      [
+        "ua_verify"
+      ]
+    ]
+  },
+  {
+    "id": "ua_verify",
+    "type": "function",
+    "z": "ua_level_tab",
+    "name": "Verify signature",
+    "func": "// Verifies a UniFi Access webhook and answers it.\n// Output 1: verified event (msg.payload = parsed JSON)\n// Output 2: HTTP response for UniFi Access\nconst MAX_AGE_SECONDS = 300; // reject signatures older than 5 minutes (replay protection)\nconst secret = env.get(\"UNIFI_ACCESS_WEBHOOK_SECRET\");\n\nfunction respond(code, text) {\n    return { req: msg.req, res: msg.res, statusCode: code, payload: text };\n}\nfunction reject(code, reason) {\n    node.warn(\"UniFi webhook rejected: \" + reason);\n    node.status({ fill: \"red\", shape: \"ring\", text: reason });\n    return [null, respond(code, reason)];\n}\n\nif (!secret) {\n    node.error(\"Environment variable UNIFI_ACCESS_WEBHOOK_SECRET is not set\");\n    return reject(500, \"not configured\");\n}\n\nlet body = msg.payload;\nif (typeof body === \"string\") body = Buffer.from(body, \"utf8\");\nif (!Buffer.isBuffer(body)) {\n    node.error(\"The HTTP In node must have 'Do not parse body' enabled so the raw body can be verified\");\n    return reject(500, \"raw body unavailable\");\n}\n\nconst header = String((msg.req && msg.req.headers && msg.req.headers[\"signature\"]) || \"\");\nconst parts = {};\nfor (const part of header.split(\",\")) {\n    const i = part.indexOf(\"=\");\n    if (i > 0) parts[part.slice(0, i).trim()] = part.slice(i + 1).trim();\n}\nconst t = parts.t;\nconst v1 = parts.v1;\nif (!t || !/^\\d+$/.test(t) || !v1 || !/^[0-9a-fA-F]{64}$/.test(v1)) {\n    return reject(401, \"missing or malformed signature\");\n}\nif (Math.abs(Date.now() / 1000 - Number(t)) > MAX_AGE_SECONDS) {\n    return reject(401, \"signature expired\");\n}\n\nconst expected = crypto\n    .createHmac(\"sha256\", secret)\n    .update(Buffer.concat([Buffer.from(t + \".\", \"utf8\"), body]))\n    .digest();\nif (!crypto.timingSafeEqual(expected, Buffer.from(v1, \"hex\"))) {\n    return reject(401, \"invalid signature\");\n}\n\n// Ignore exact repeats of a valid delivery\nconst seen = flow.get(\"unifiAccessSeenSignatures\") || [];\nif (seen.includes(v1)) {\n    node.status({ fill: \"yellow\", shape: \"ring\", text: \"duplicate ignored\" });\n    return [null, respond(200, \"duplicate\")];\n}\nseen.push(v1);\nflow.set(\"unifiAccessSeenSignatures\", seen.slice(-100));\n\nlet event;\ntry {\n    event = JSON.parse(body.toString(\"utf8\"));\n} catch (err) {\n    return reject(400, \"invalid JSON\");\n}\n\nnode.status({ fill: \"green\", shape: \"dot\", text: (event.event || \"event\") + \" verified\" });\nreturn [{ payload: event, topic: event.event }, respond(200, \"ok\")];\n",
+    "outputs": 2,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [
+      {
+        "var": "crypto",
+        "module": "crypto"
+      }
+    ],
+    "x": 380,
+    "y": 120,
+    "wires": [
+      [
+        "ua_map"
+      ],
+      [
+        "ua_http_out"
+      ]
+    ]
+  },
+  {
+    "id": "ua_http_out",
+    "type": "http response",
+    "z": "ua_level_tab",
+    "name": "Reply to UniFi",
+    "statusCode": "",
+    "headers": {},
+    "x": 610,
+    "y": 180,
+    "wires": []
+  },
+  {
+    "id": "ua_map",
+    "type": "function",
+    "z": "ua_level_tab",
+    "name": "Map door → lock",
+    "func": "// Map each UniFi Access door to its Level lock.\n// Keys can be the UniFi door ID or the door name exactly as shown in UniFi Access.\n// Unmatched doors are logged in the debug sidebar with their ID and name.\nconst DOORS = {\n    \"Front Door\": \"lock.front_door\",\n    \"Garage\": \"lock.garage\",\n};\n\nconst event = msg.payload || {};\nif (event.event !== \"access.door.unlock\") return null;\n\nconst data = event.data || {};\nconst door = data.location || {};\nconst access = data.object || {};\n\nif (access.result && /denied|block|reject|fail/i.test(access.result)) {\n    node.warn(`Access not granted at \"${door.name}\": ${access.result}`);\n    return null;\n}\n\nconst entity = DOORS[door.id] || DOORS[door.name];\nif (!entity) {\n    node.warn(`No Level lock mapped for UniFi door \"${door.name}\" (id ${door.id}). Add it to DOORS.`);\n    node.status({ fill: \"yellow\", shape: \"ring\", text: `unmapped: ${door.name}` });\n    return null;\n}\n\nconst who = (data.actor && data.actor.name) || \"unknown\";\nnode.status({ fill: \"green\", shape: \"dot\", text: `${door.name} → ${entity} (${who})` });\nreturn {\n    payload: { action: \"lock.unlock\", target: { entity_id: [entity] } },\n    unifi: {\n        door: door.name,\n        door_id: door.id,\n        actor: who,\n        method: access.authentication_type,\n        reader_id: access.reader_id,\n    },\n};\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 610,
+    "y": 120,
+    "wires": [
+      [
+        "ua_unlock",
+        "ua_debug"
+      ]
+    ]
+  },
+  {
+    "id": "ua_unlock",
+    "type": "api-call-service",
+    "z": "ua_level_tab",
+    "name": "Unlock Level lock",
+    "server": "",
+    "version": 7,
+    "debugenabled": false,
+    "action": "lock.unlock",
+    "floorId": [],
+    "areaId": [],
+    "deviceId": [],
+    "entityId": [],
+    "labelId": [],
+    "data": "",
+    "dataType": "jsonata",
+    "mergeContext": "",
+    "mustacheAltTags": false,
+    "outputProperties": [],
+    "queue": "none",
+    "blockInputOverrides": false,
+    "x": 840,
+    "y": 120,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "ua_debug",
+    "type": "debug",
+    "z": "ua_level_tab",
+    "name": "Unlock log",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "unifi",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 830,
+    "y": 180,
+    "wires": []
+  }
+]

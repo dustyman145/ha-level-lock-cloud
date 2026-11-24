@@ -70,7 +70,10 @@ Needs [node-red-contrib-home-assistant-websocket](https://github.com/zachowj/nod
 - **State:** *Events: state* / *Trigger: state* nodes on the lock, door or battery entities.
 - **Events:** *Events: all* node with event type `level_lock_cloud_state_changed`. Payload: `{ lock_id, name, locked, bolt_state, source }`.
 
-Example flow: [`examples/node-red-flow.json`](examples/node-red-flow.json) (Menu → Import, then set your server and entity ID).
+Example flows (Menu → Import, then set your server and entity IDs):
+
+- [`examples/node-red-flow.json`](examples/node-red-flow.json): lock/unlock buttons and the state-change event.
+- [`examples/unifi-access-unlock-flow.json`](examples/unifi-access-unlock-flow.json): unlock the matching Level lock when a **UniFi Access** reader grants access, with webhook signature verification. Setup: [`examples/README.md`](examples/README.md).
 
 ## Troubleshooting
 
