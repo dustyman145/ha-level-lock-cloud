@@ -1,0 +1,67 @@
+[
+  {
+    "id": "level_inject_lock",
+    "type": "inject",
+    "name": "Lock front door",
+    "props": [],
+    "repeat": "",
+    "once": false,
+    "wires": [["level_action_lock"]]
+  },
+  {
+    "id": "level_action_lock",
+    "type": "api-call-service",
+    "name": "lock.lock",
+    "server": "",
+    "version": 7,
+    "action": "lock.lock",
+    "floorId": [],
+    "areaId": [],
+    "deviceId": [],
+    "entityId": ["lock.front_door"],
+    "data": "",
+    "dataType": "jsonata",
+    "wires": [[]]
+  },
+  {
+    "id": "level_inject_unlock",
+    "type": "inject",
+    "name": "Unlock front door",
+    "props": [],
+    "repeat": "",
+    "once": false,
+    "wires": [["level_action_unlock"]]
+  },
+  {
+    "id": "level_action_unlock",
+    "type": "api-call-service",
+    "name": "lock.unlock",
+    "server": "",
+    "version": 7,
+    "action": "lock.unlock",
+    "floorId": [],
+    "areaId": [],
+    "deviceId": [],
+    "entityId": ["lock.front_door"],
+    "data": "",
+    "dataType": "jsonata",
+    "wires": [[]]
+  },
+  {
+    "id": "level_event_listener",
+    "type": "server-events",
+    "name": "Level lock state changed",
+    "server": "",
+    "version": 3,
+    "eventType": "level_lock_cloud_state_changed",
+    "wires": [["level_debug"]]
+  },
+  {
+    "id": "level_debug",
+    "type": "debug",
+    "name": "Level event",
+    "active": true,
+    "complete": "payload",
+    "wires": []
+  }
+]

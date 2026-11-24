@@ -1,0 +1,18 @@
+{
+  "domain": "level_lock_cloud",
+  "name": "Level Lock Cloud",
+  "codeowners": [
+    "@dustyman145"
+  ],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/dustyman145/ha-level-lock-cloud",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/dustyman145/ha-level-lock-cloud/issues",
+  "loggers": [
+    "custom_components.level_lock_cloud"
+  ],
+  "requirements": [],
+  "version": "0.2.0"
+}

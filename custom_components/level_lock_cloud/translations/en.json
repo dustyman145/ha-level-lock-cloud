@@ -1,0 +1,91 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Level Lock Cloud",
+        "description": "Sign in with your Level account. Your password is stored in Home Assistant because it is needed to decrypt the key that signs lock commands.",
+        "data": {
+          "email": "Email or phone number",
+          "password": "Password"
+        }
+      },
+      "tfa_method": {
+        "title": "Two-factor authentication",
+        "description": "Choose where Level should send your verification code.\n\nEmail: {email}\nPhone: {phone}",
+        "data": {
+          "method": "Send code by"
+        }
+      },
+      "tfa_code": {
+        "title": "Two-factor authentication",
+        "description": "Enter the verification code Level sent you.",
+        "data": {
+          "code": "Code"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the Level cloud.",
+      "invalid_auth": "Invalid email/phone or password.",
+      "invalid_code": "The verification code was not accepted.",
+      "otp_send_failed": "Level could not send a verification code.",
+      "unknown": "Unexpected error."
+    },
+    "abort": {
+      "already_configured": "This Level account is already configured.",
+      "reauth_successful": "Re-authentication was successful."
+    }
+  },
+  "selector": {
+    "tfa_method": {
+      "options": {
+        "email": "Email",
+        "phone": "Text message"
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "door": {
+        "name": "Door"
+      },
+      "bridge": {
+        "name": "Level Connect"
+      }
+    },
+    "sensor": {
+      "battery_level": {
+        "name": "Battery level",
+        "state": {
+          "low": "Low",
+          "medium": "Medium",
+          "high": "High"
+        }
+      },
+      "last_activity": {
+        "name": "Last activity",
+        "state": {
+          "unknown": "Unknown",
+          "manual": "Manual",
+          "bluetooth": "Bluetooth",
+          "homekit": "HomeKit",
+          "console": "Console",
+          "auto_lock": "Auto-lock",
+          "matter": "Matter",
+          "approach_to_unlock": "Approach to unlock",
+          "nfc": "NFC",
+          "zigbee": "Zigbee",
+          "touch": "Touch",
+          "remote": "Remote",
+          "ring": "Ring",
+          "alexa": "Alexa",
+          "keypad": "Keypad",
+          "google": "Google"
+        }
+      },
+      "last_activity_time": {
+        "name": "Last activity time"
+      }
+    }
+  }
+}
